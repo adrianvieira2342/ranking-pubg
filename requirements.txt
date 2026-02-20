@@ -1,3 +1,5 @@
-st-postgresql
+streamlit
+pandas
 psycopg2-binary
 SQLAlchemy
+st-postgresql
