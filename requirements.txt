@@ -2,4 +2,4 @@ streamlit
 pandas
 psycopg2-binary
 SQLAlchemy
-st-postgresql
+st-postgresql-conn
