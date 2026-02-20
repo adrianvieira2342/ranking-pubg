@@ -15,13 +15,20 @@ st.set_page_config(
 # =============================
 def get_data():
     try:
-        conn = st.connection("postgresql", type="sql")
+        conn = st.connection(
+            "postgresql",
+            type="sql",
+            url=st.secrets["DATABASE_URL"]
+        )
+
         query = "SELECT * FROM ranking_squad"
         df = conn.query(query, ttl="5m")
         return df
+
     except Exception as e:
         st.error(f"Erro na conexão com o banco: {e}")
         return pd.DataFrame()
+
 
 # =============================
 # PROCESSAMENTO DO RANKING
@@ -66,6 +73,7 @@ def processar_ranking_completo(df_ranking, col_score):
 
     return df_ranking[cols_base + [col_score]]
 
+
 # =============================
 # INTERFACE
 # =============================
@@ -76,7 +84,6 @@ df_bruto = get_data()
 
 if not df_bruto.empty:
 
-    # Evita divisão por zero
     df_bruto['partidas'] = df_bruto['partidas'].replace(0, 1)
 
     tab1, tab2, tab3 = st.tabs([
@@ -93,9 +100,6 @@ if not df_bruto.empty:
             ascending=False
         ).reset_index(drop=True)
 
-        # =============================
-        # PÓDIO (SE TIVER 3+ JOGADORES)
-        # =============================
         if len(ranking_ordenado) >= 3:
             top1, top2, top3 = st.columns(3)
 
@@ -144,9 +148,6 @@ if not df_bruto.empty:
             hide_index=True
         )
 
-    # =============================
-    # CÁLCULOS DOS SCORES
-    # =============================
     with tab1:
         f_pro = (
             (df_bruto['kr'] * 40)
@@ -171,9 +172,6 @@ if not df_bruto.empty:
         )
         renderizar_ranking(df_bruto.copy(), 'Score_Elite', f_elite)
 
-    # =============================
-    # CRÉDITOS
-    # =============================
     st.markdown("---")
     st.markdown(
         "<div style='text-align: center; color: gray; padding: 20px;'>📊 <b>By Adriano Vieira</b></div>",
