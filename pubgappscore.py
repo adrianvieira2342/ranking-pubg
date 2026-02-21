@@ -6,116 +6,96 @@ import time
 # =============================
 # CONFIGURAÇÃO DA PÁGINA
 # =============================
-st.set_page_config(page_title="PUBG Squad Ranking", layout="wide", page_icon="🎮")
+st.set_page_config(page_title="DEBUG PUBG Ranking", layout="wide")
 
-# =============================
-# CONEXÃO DE EMERGÊNCIA (SEM CACHE)
-# =============================
-def get_data_absolute_fresh():
+def get_data_diagnostic():
     try:
-        # Pega a URL. Tente trocar a porta 6543 por 5432 na sua secret se possível.
+        # Recomendo fortemente usar a porta 5432 na URL do segredo
         db_url = st.secrets["DATABASE_URL"]
-        
-        # Criamos o engine com 'isolation_level' para ler dados commitados na hora
-        engine = create_engine(
-            db_url, 
-            isolation_level="READ COMMITTED",
-            pool_pre_ping=True,
-            pool_recycle=0
-        )
+        engine = create_engine(db_url, pool_pre_ping=True)
         
         with engine.connect() as conn:
-            # Forçamos o fechamento de qualquer transação pendente no banco
-            conn.execute(text("COMMIT")) 
+            # Força o banco a liberar dados novos
+            conn.execute(text("COMMIT"))
             
-            # Query com cache buster (timestamp aleatório no comentário)
-            query = text(f"SELECT * FROM ranking_squad -- refresh_{int(time.time())}")
-            df = pd.read_sql(query, conn)
+            # Query com timestamp para matar qualquer cache no provedor
+            query = f"SELECT * FROM ranking_squad -- {time.time()}"
+            df = pd.read_sql(text(query), conn)
             
-        return df
+            # Pega o horário da última atualização do próprio banco (se a coluna existir)
+            # Ou apenas conta as linhas
+            count_rows = len(df)
+            
+        return df, count_rows
     except Exception as e:
-        st.error(f"Erro na leitura: {e}")
-        return pd.DataFrame()
+        st.error(f"Erro de conexão: {e}")
+        return pd.DataFrame(), 0
 
 # =============================
-# LÓGICA DE INTERFACE
+# INTERFACE DE DIAGNÓSTICO
 # =============================
-st.title("🎮 PUBG Squad Ranking")
+st.title("🎮 PUBG Squad - Verificação de Dados")
 
-# Barra lateral para controle de dados
+df_bruto, total_linhas = get_data_diagnostic()
+
+# Painel de Controle lateral
 with st.sidebar:
-    st.header("⚙️ Controles")
-    if st.button("🔄 SINCRONIZAR BANCO AGORA"):
+    st.header("🔍 Diagnóstico")
+    st.write(f"**Total de linhas no banco:** {total_linhas}")
+    st.write(f"**Última leitura:** {time.strftime('%H:%M:%S')}")
+    
+    if st.button("♻️ Limpar Tudo e Recarregar"):
         st.cache_data.clear()
         st.cache_resource.clear()
         st.rerun()
-    st.write(f"Última tentativa: {time.strftime('%H:%M:%S')}")
-
-# Busca os dados
-df_bruto = get_data_absolute_fresh()
 
 if not df_bruto.empty:
-    # Tratamento de erro: converte colunas para numérico (caso o banco envie strings)
-    cols_para_fix = ['partidas', 'vitorias', 'kr', 'dano_medio', 'headshots', 'assists', 'revives']
-    for col in cols_para_fix:
-        if col in df_bruto.columns:
-            df_bruto[col] = pd.to_numeric(df_bruto[col], errors='coerce').fillna(0)
+    # --- AQUI ESTÁ O TRUQUE PARA SABER SE ESTÁ ATUALIZADO ---
+    st.subheader("👀 Visualização Bruta (Primeiras 5 linhas)")
+    # Mostramos o DF sem cálculos para ver se o número de partidas bate com o banco
+    st.table(df_bruto[['nick', 'partidas', 'vitorias', 'kr']].head(5))
+    
+    st.markdown("---")
 
-    # Evita divisão por zero
-    df_bruto['partidas'] = df_bruto['partidas'].replace(0, 1)
-
-    # --- SISTEMA DE TABS ---
+    # Tratamento de dados
+    df_bruto['partidas'] = pd.to_numeric(df_bruto['partidas'], errors='coerce').fillna(1).replace(0, 1)
+    
     tab1, tab2, tab3 = st.tabs(["🔥 PRO", "🤝 TEAM", "🎯 ELITE"])
 
-    def processar_e_exibir(df_input, col_score, formula):
-        df_input[col_score] = formula.round(2)
-        # Ordenação REAL por score atualizado
-        df_final = df_input.sort_values(by=col_score, ascending=False).reset_index(drop=True)
+    def mostrar_ranking(df_temp, formula, col_nome):
+        df_temp[col_nome] = formula.round(2)
+        # Ordenação agressiva: o maior score vai para o topo
+        df_temp = df_temp.sort_values(by=col_nome, ascending=False).reset_index(drop=True)
         
-        # Gera posições e emojis baseados nos dados NOVOS
-        total = len(df_final)
-        labels = []
-        nicks_formatados = []
+        # Recalcula as zonas baseado na nova ordem
+        total = len(df_temp)
+        def definir_zona(i):
+            if i < 3: return "Elite Zone"
+            if i >= total - 3: return "Cocô Zone"
+            return "Medíocre Zone"
         
-        for i, row in df_final.iterrows():
-            pos = i + 1
-            nick = str(row['nick']).replace("💀", "").replace("💩", "").replace("👤", "").strip()
-            
-            if pos <= 3:
-                labels.append("Elite Zone")
-                nicks_formatados.append(f"💀 {nick}")
-            elif pos > (total - 3) and total > 5:
-                labels.append("Cocô Zone")
-                nicks_formatados.append(f"💩 {nick}")
-            else:
-                labels.append("Medíocre Zone")
-                nicks_formatados.append(f"👤 {nick}")
+        df_temp['Classificação'] = [definir_zona(i) for i in range(total)]
         
-        df_final['Classificação'] = labels
-        df_final['nick'] = nicks_formatados
-        df_final['Pos'] = range(1, total + 1)
-
-        # Exibição
         st.dataframe(
-            df_final.style
-            .apply(lambda r: ['background-color: #004d00' if r['Classificação'] == "Elite Zone" 
-                              else 'background-color: #4d2600' if r['Classificação'] == "Cocô Zone" 
-                              else '' for _ in r], axis=1)
-            .background_gradient(cmap='YlGnBu', subset=[col_score]),
-            use_container_width=True, height=500, hide_index=True
+            df_temp[['nick', 'partidas', 'vitorias', 'kr', col_nome, 'Classificação']].style
+            .background_gradient(cmap='YlGn', subset=[col_nome])
+            .apply(lambda x: ['background-color: #004d00' if x.Classificação == "Elite Zone" 
+                              else 'background-color: #4d2600' if x.Classificação == "Cocô Zone" 
+                              else '' for _ in x], axis=1),
+            use_container_width=True
         )
 
     with tab1:
-        f = (df_bruto['kr'] * 40) + (df_bruto['dano_medio'] / 8) + ((df_bruto['vitorias'] / df_bruto['partidas']) * 500)
-        processar_e_exibir(df_bruto.copy(), 'Score_Pro', f)
+        f_pro = (df_bruto['kr'] * 40) + (df_bruto['dano_medio'] / 8) + ((df_bruto['vitorias'] / df_bruto['partidas']) * 500)
+        mostrar_ranking(df_bruto.copy(), f_pro, "Score_Pro")
 
     with tab2:
-        f = ((df_bruto['vitorias'] / df_bruto['partidas']) * 1000) + ((df_bruto['revives'] / df_bruto['partidas']) * 50) + ((df_bruto['assists'] / df_bruto['partidas']) * 35)
-        processar_e_exibir(df_bruto.copy(), 'Score_Team', f)
+        f_team = ((df_bruto['vitorias'] / df_bruto['partidas']) * 1000) + ((df_bruto['revives'] / df_bruto['partidas']) * 50)
+        mostrar_ranking(df_bruto.copy(), f_team, "Score_Team")
 
     with tab3:
-        f = (df_bruto['kr'] * 50) + ((df_bruto['headshots'] / df_bruto['partidas']) * 60) + (df_bruto['dano_medio'] / 5)
-        processar_e_exibir(df_bruto.copy(), 'Score_Elite', f)
+        f_elite = (df_bruto['kr'] * 50) + (df_bruto['dano_medio'] / 5)
+        mostrar_ranking(df_bruto.copy(), f_elite, "Score_Elite")
 
 else:
-    st.info("Aguardando dados... Se você atualizou o banco agora, clique no botão de Sincronizar.")
+    st.warning("O DataFrame está vindo vazio. Verifique se o nome da tabela é 'ranking_squad' no schema 'public'.")
