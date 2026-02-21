@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import text
 
 # =============================
 # CONFIGURAÇÃO DA PÁGINA
@@ -21,16 +20,20 @@ def get_connection():
         url=st.secrets["DATABASE_URL"]
     )
 
+# 🔥 UPDATE TESTE (somente partidas)
 def atualizar_banco():
     try:
         conn = get_connection()
-        with conn.session as session:
-            session.execute(text("""
-                UPDATE ranking_squad
-                SET kills = kills + 5,
-                    dano_medio = dano_medio + 10
-            """))
-            session.commit()
+
+        query = """
+        UPDATE ranking_squad
+        SET partidas = partidas + 1
+        """
+
+        conn.query(query, ttl=0)
+
+        st.success("Partidas atualizadas com sucesso.")
+
     except Exception as e:
         st.error(f"Erro ao atualizar banco: {e}")
 
@@ -93,7 +96,7 @@ def processar_ranking_completo(df_ranking, col_score):
 st.markdown("# 🎮 Ranking Squad - Season 40")
 st.markdown("---")
 
-# 🔥 Atualiza automaticamente o banco ao carregar
+# 🔥 Executa update automaticamente ao carregar
 atualizar_banco()
 
 df_bruto = get_data()
