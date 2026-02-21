@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+from sqlalchemy import create_engine, text
+import time
 
 # =============================
 # CONFIGURAÇÃO DA PÁGINA
@@ -15,15 +17,23 @@ st.set_page_config(
 # =============================
 def get_data():
     try:
-        conn = st.connection(
-            "postgresql",
-            type="sql",
-            url=st.secrets["DATABASE_URL"]
+        # Ajuste para Transaction Pooler (IPv4) e anti-cache
+        db_url = st.secrets["DATABASE_URL"]
+        
+        # Criamos o engine manualmente para garantir o pool_pre_ping com o Pooler
+        engine = create_engine(
+            db_url, 
+            pool_pre_ping=True,
+            pool_recycle=0
         )
-
-        query = "SELECT * FROM ranking_squad"
-        df = conn.query(query, ttl=0)
-        return df
+        
+        with engine.connect() as conn:
+            # Força o banco a ignorar sessões antigas
+            conn.execute(text("DISCARD ALL"))
+            # Query com Cache Buster para garantir dados novos
+            query = text(f"SELECT * FROM ranking_squad -- refresh_{int(time.time())}")
+            df = pd.read_sql(query, conn)
+            return df
 
     except Exception as e:
         st.error(f"Erro na conexão com o banco: {e}")
@@ -77,7 +87,16 @@ def processar_ranking_completo(df_ranking, col_score):
 # =============================
 # INTERFACE
 # =============================
-st.markdown("# 🎮 Ranking Squad - Season 40")
+col_t, col_r = st.columns([0.8, 0.2])
+with col_t:
+    st.markdown("# 🎮 Ranking Squad - Season 40")
+with col_r:
+    # Botão para forçar a limpeza do cache e recarregar
+    if st.button("🔄 Atualizar Dados"):
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.rerun()
+
 st.markdown("---")
 
 df_bruto = get_data()
