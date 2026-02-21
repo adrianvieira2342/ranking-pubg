@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from sqlalchemy import text
 
 # =============================
 # CONFIGURAÇÃO DA PÁGINA
@@ -13,22 +14,40 @@ st.set_page_config(
 # =============================
 # CONEXÃO COM BANCO (SUPABASE)
 # =============================
+def get_connection():
+    return st.connection(
+        "postgresql",
+        type="sql",
+        url=st.secrets["DATABASE_URL"]
+    )
+
 def get_data():
     try:
-        conn = st.connection(
-            "postgresql",
-            type="sql",
-            url=st.secrets["DATABASE_URL"]
-        )
-
+        conn = get_connection()
         query = "SELECT * FROM ranking_squad"
         df = conn.query(query, ttl=0)
         return df
-
     except Exception as e:
         st.error(f"Erro na conexão com o banco: {e}")
         return pd.DataFrame()
 
+# =============================
+# FUNÇÃO DE UPDATE (TESTE)
+# =============================
+def atualizar_banco_teste():
+    try:
+        conn = get_connection()
+
+        with conn.session as session:
+            session.execute(text("""
+                UPDATE ranking_squad
+                SET kills = kills + 1
+            """))
+            session.commit()
+
+        st.success("Banco atualizado com sucesso! (+1 kill para todos)")
+    except Exception as e:
+        st.error(f"Erro ao atualizar banco: {e}")
 
 # =============================
 # PROCESSAMENTO DO RANKING
@@ -73,12 +92,15 @@ def processar_ranking_completo(df_ranking, col_score):
 
     return df_ranking[cols_base + [col_score]]
 
-
 # =============================
 # INTERFACE
 # =============================
 st.markdown("# 🎮 Ranking Squad - Season 40")
 st.markdown("---")
+
+# 🔄 BOTÃO DE TESTE
+if st.button("🔄 Atualizar Banco (Teste)"):
+    atualizar_banco_teste()
 
 df_bruto = get_data()
 
@@ -131,18 +153,8 @@ if not df_bruto.empty:
             col_score
         )
 
-        def highlight_zones(row):
-            if row['Classificação'] == "Elite Zone":
-                return ['background-color: #004d00; color: white; font-weight: bold'] * len(row)
-            if row['Classificação'] == "Cocô Zone":
-                return ['background-color: #4d2600; color: white; font-weight: bold'] * len(row)
-            return [''] * len(row)
-
         st.dataframe(
-            ranking_final.style
-            .background_gradient(cmap='YlGnBu', subset=[col_score])
-            .apply(highlight_zones, axis=1)
-            .format(precision=2),
+            ranking_final,
             use_container_width=True,
             height=650,
             hide_index=True
@@ -171,12 +183,6 @@ if not df_bruto.empty:
             + (df_bruto['dano_medio'] / 5)
         )
         renderizar_ranking(df_bruto.copy(), 'Score_Elite', f_elite)
-
-    st.markdown("---")
-    st.markdown(
-        "<div style='text-align: center; color: gray; padding: 20px;'>📊 <b>By Adriano Vieira</b></div>",
-        unsafe_allow_html=True
-    )
 
 else:
     st.info("Banco conectado. Aguardando inserção de dados na tabela 'ranking_squad'.")
