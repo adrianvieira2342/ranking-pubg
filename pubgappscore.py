@@ -17,10 +17,11 @@ st.set_page_config(
 # =============================
 def get_data():
     try:
+        # Pega a URL que você salvou no Secrets (formato TOML correto)
         db_url = st.secrets["DATABASE_URL"]
         
-        # Ajuste: Removido o isolamento manual e adicionado AUTOCOMMIT
-        # Isso evita que o SQLAlchemy abra blocos de transação desnecessários
+        # O segredo para o Pooler (6543) atualizar é usar o isolation_level="AUTOCOMMIT"
+        # Isso impede que o SQLAlchemy segure uma "foto" antiga dos dados
         engine = create_engine(
             db_url, 
             pool_pre_ping=True,
@@ -28,9 +29,10 @@ def get_data():
         )
         
         with engine.connect() as conn:
-            # Removido o 'DISCARD ALL' que causava o erro
-            # Query com Cache Buster para garantir dados novos
-            query = text(f"SELECT * FROM ranking_squad -- refresh_{int(time.time())}")
+            # Query com Cache Buster (comentário com tempo atual)
+            # Isso força o Supabase a processar a busca novamente
+            timestamp = int(time.time())
+            query = text(f"SELECT * FROM ranking_squad -- refresh_{timestamp}")
             df = pd.read_sql(query, conn)
             return df
 
@@ -54,6 +56,7 @@ def processar_ranking_completo(df_ranking, col_score):
         pos = i + 1
         nick_limpo = str(row['nick'])
 
+        # Limpeza de emojis para evitar duplicação visual
         for emoji in ["💀", "💩", "👤", "🏅"]:
             nick_limpo = nick_limpo.replace(emoji, "").strip()
 
@@ -90,6 +93,7 @@ col_t, col_r = st.columns([0.8, 0.2])
 with col_t:
     st.markdown("# 🎮 Ranking Squad - Season 40")
 with col_r:
+    # Botão que limpa o cache total do Streamlit
     if st.button("🔄 Atualizar Dados"):
         st.cache_data.clear()
         st.cache_resource.clear()
@@ -121,32 +125,15 @@ if not df_bruto.empty:
             top1, top2, top3 = st.columns(3)
 
             with top1:
-                st.metric(
-                    "🥇 1º Lugar",
-                    ranking_ordenado.iloc[0]['nick'],
-                    f"{ranking_ordenado.iloc[0][col_score]} pts"
-                )
-
+                st.metric("🥇 1º Lugar", ranking_ordenado.iloc[0]['nick'], f"{ranking_ordenado.iloc[0][col_score]} pts")
             with top2:
-                st.metric(
-                    "🥈 2º Lugar",
-                    ranking_ordenado.iloc[1]['nick'],
-                    f"{ranking_ordenado.iloc[1][col_score]} pts"
-                )
-
+                st.metric("🥈 2º Lugar", ranking_ordenado.iloc[1]['nick'], f"{ranking_ordenado.iloc[1][col_score]} pts")
             with top3:
-                st.metric(
-                    "🥉 3º Lugar",
-                    ranking_ordenado.iloc[2]['nick'],
-                    f"{ranking_ordenado.iloc[2][col_score]} pts"
-                )
+                st.metric("🥉 3º Lugar", ranking_ordenado.iloc[2]['nick'], f"{ranking_ordenado.iloc[2][col_score]} pts")
 
         st.markdown("---")
 
-        ranking_final = processar_ranking_completo(
-            ranking_ordenado,
-            col_score
-        )
+        ranking_final = processar_ranking_completo(ranking_ordenado, col_score)
 
         def highlight_zones(row):
             if row['Classificação'] == "Elite Zone":
@@ -166,34 +153,19 @@ if not df_bruto.empty:
         )
 
     with tab1:
-        f_pro = (
-            (df_bruto['kr'] * 40)
-            + (df_bruto['dano_medio'] / 8)
-            + ((df_bruto['vitorias'] / df_bruto['partidas']) * 100 * 5)
-        )
+        f_pro = (df_bruto['kr'] * 40) + (df_bruto['dano_medio'] / 8) + ((df_bruto['vitorias'] / df_bruto['partidas']) * 100 * 5)
         renderizar_ranking(df_bruto.copy(), 'Score_Pro', f_pro)
 
     with tab2:
-        f_team = (
-            ((df_bruto['vitorias'] / df_bruto['partidas']) * 100 * 10)
-            + ((df_bruto['revives'] / df_bruto['partidas']) * 50)
-            + ((df_bruto['assists'] / df_bruto['partidas']) * 35)
-        )
+        f_team = ((df_bruto['vitorias'] / df_bruto['partidas']) * 100 * 10) + ((df_bruto['revives'] / df_bruto['partidas']) * 50) + ((df_bruto['assists'] / df_bruto['partidas']) * 35)
         renderizar_ranking(df_bruto.copy(), 'Score_Team', f_team)
 
     with tab3:
-        f_elite = (
-            (df_bruto['kr'] * 50)
-            + ((df_bruto['headshots'] / df_bruto['partidas']) * 60)
-            + (df_bruto['dano_medio'] / 5)
-        )
+        f_elite = (df_bruto['kr'] * 50) + ((df_bruto['headshots'] / df_bruto['partidas']) * 60) + (df_bruto['dano_medio'] / 5)
         renderizar_ranking(df_bruto.copy(), 'Score_Elite', f_elite)
 
     st.markdown("---")
-    st.markdown(
-        "<div style='text-align: center; color: gray; padding: 20px;'>📊 <b>By Adriano Vieira</b></div>",
-        unsafe_allow_html=True
-    )
+    st.markdown(f"<div style='text-align: center; color: gray; padding: 20px;'>📊 Última Sincronização: {time.strftime('%H:%M:%S')} | <b>By Adriano Vieira</b></div>", unsafe_allow_html=True)
 
 else:
-    st.info("Conectado. Se a tabela não aparecer, verifique se há dados no banco.")
+    st.info("Conectado. Verifique se os dados foram enviados para a tabela 'ranking_squad'.")
