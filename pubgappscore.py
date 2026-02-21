@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text
 
 # =============================
 # CONFIGURAÇÃO DA PÁGINA
@@ -12,38 +11,25 @@ st.set_page_config(
 )
 
 # =============================
-# CONEXÃO COM BANCO (SUPABASE)
+# CONEXÃO E LIMPEZA DE CACHE
 # =============================
-def get_engine():
-    return create_engine(st.secrets["DATABASE_URL"])
-
 def get_data():
     try:
-        engine = get_engine()
+        # Criando a conexão
+        conn = st.connection(
+            "postgresql",
+            type="sql",
+            url=st.secrets["DATABASE_URL"]
+        )
+        
+        # O parâmetro ttl=0 instrui o Streamlit a NÃO cachear o resultado
         query = "SELECT * FROM ranking_squad"
-        df = pd.read_sql(query, engine)
+        df = conn.query(query, ttl=0)
         return df
+
     except Exception as e:
         st.error(f"Erro na conexão com o banco: {e}")
         return pd.DataFrame()
-
-# =============================
-# ATUALIZAÇÃO DO BANCO
-# =============================
-def atualizar_banco():
-    try:
-        engine = get_engine()
-        with engine.begin() as conn:
-            result = conn.execute(text("""
-                UPDATE ranking_squad
-                SET partidas = partidas + 1
-            """))
-
-        st.success(f"✅ Partidas atualizadas! ({result.rowcount} jogadores afetados)")
-        st.rerun()
-
-    except Exception as e:
-        st.error(f"Erro ao atualizar banco: {e}")
 
 # =============================
 # PROCESSAMENTO DO RANKING
@@ -54,12 +40,14 @@ def processar_ranking_completo(df_ranking, col_score):
     zonas = []
     posicoes = []
 
+    # Reset de índice para garantir ordenação visual correta
     df_ranking = df_ranking.reset_index(drop=True)
 
     for i, row in df_ranking.iterrows():
         pos = i + 1
         nick_limpo = str(row['nick'])
 
+        # Limpeza rigorosa de emojis antigos para evitar duplicação no re-run
         for emoji in ["💀", "💩", "👤", "🏅"]:
             nick_limpo = nick_limpo.replace(emoji, "").strip()
 
@@ -89,21 +77,26 @@ def processar_ranking_completo(df_ranking, col_score):
     return df_ranking[cols_base + [col_score]]
 
 # =============================
-# INTERFACE
+# INTERFACE PRINCIPAL
 # =============================
-st.markdown("# 🎮 Ranking Squad - Season 40")
+col_title, col_btn = st.columns([4, 1])
 
-col_btn1, col_btn2 = st.columns([1,5])
-with col_btn1:
-    if st.button("🔄 Atualizar Banco"):
-        atualizar_banco()
+with col_title:
+    st.markdown("# 🎮 Ranking Squad - Season 40")
+
+with col_btn:
+    # Botão para forçar a limpeza de qualquer cache residual
+    if st.button("🔄 Atualizar Dados"):
+        st.cache_data.clear()
+        st.rerun()
 
 st.markdown("---")
 
+# Busca os dados (sempre fresco devido ao ttl=0)
 df_bruto = get_data()
 
 if not df_bruto.empty:
-
+    # Evita erro de divisão por zero globalmente
     df_bruto['partidas'] = df_bruto['partidas'].replace(0, 1)
 
     tab1, tab2, tab3 = st.tabs([
@@ -113,45 +106,28 @@ if not df_bruto.empty:
     ])
 
     def renderizar_ranking(df_local, col_score, formula):
-
+        # Cálculo do Score
         df_local[col_score] = formula.round(2)
-
+        
+        # Ordenação do maior para o menor
         ranking_ordenado = df_local.sort_values(
             col_score,
             ascending=False
         ).reset_index(drop=True)
 
+        # Cards de Destaque (Top 3)
         if len(ranking_ordenado) >= 3:
-            top1, top2, top3 = st.columns(3)
-
-            with top1:
-                st.metric(
-                    "🥇 1º Lugar",
-                    ranking_ordenado.iloc[0]['nick'],
-                    f"{ranking_ordenado.iloc[0][col_score]} pts"
-                )
-
-            with top2:
-                st.metric(
-                    "🥈 2º Lugar",
-                    ranking_ordenado.iloc[1]['nick'],
-                    f"{ranking_ordenado.iloc[1][col_score]} pts"
-                )
-
-            with top3:
-                st.metric(
-                    "🥉 3º Lugar",
-                    ranking_ordenado.iloc[2]['nick'],
-                    f"{ranking_ordenado.iloc[2][col_score]} pts"
-                )
+            t1, t2, t3 = st.columns(3)
+            t1.metric("🥇 1º Lugar", ranking_ordenado.iloc[0]['nick'], f"{ranking_ordenado.iloc[0][col_score]} pts")
+            t2.metric("🥈 2º Lugar", ranking_ordenado.iloc[1]['nick'], f"{ranking_ordenado.iloc[1][col_score]} pts")
+            t3.metric("🥉 3º Lugar", ranking_ordenado.iloc[2]['nick'], f"{ranking_ordenado.iloc[2][col_score]} pts")
 
         st.markdown("---")
 
-        ranking_final = processar_ranking_completo(
-            ranking_ordenado,
-            col_score
-        )
+        # Processa emojis e zonas baseado na nova ordem
+        ranking_final = processar_ranking_completo(ranking_ordenado, col_score)
 
+        # Lógica de coloração de linhas
         def highlight_zones(row):
             if row['Classificação'] == "Elite Zone":
                 return ['background-color: #004d00; color: white; font-weight: bold'] * len(row)
@@ -159,10 +135,11 @@ if not df_bruto.empty:
                 return ['background-color: #4d2600; color: white; font-weight: bold'] * len(row)
             return [''] * len(row)
 
+        # Exibição da Tabela com Estilo
         st.dataframe(
             ranking_final.style
-            .background_gradient(cmap='YlGnBu', subset=[col_score])
             .apply(highlight_zones, axis=1)
+            .background_gradient(cmap='YlGnBu', subset=[col_score])
             .format(precision=2),
             use_container_width=True,
             height=650,
@@ -173,13 +150,13 @@ if not df_bruto.empty:
         f_pro = (
             (df_bruto['kr'] * 40)
             + (df_bruto['dano_medio'] / 8)
-            + ((df_bruto['vitorias'] / df_bruto['partidas']) * 100 * 5)
+            + ((df_bruto['vitorias'] / df_bruto['partidas']) * 500)
         )
         renderizar_ranking(df_bruto.copy(), 'Score_Pro', f_pro)
 
     with tab2:
         f_team = (
-            ((df_bruto['vitorias'] / df_bruto['partidas']) * 100 * 10)
+            ((df_bruto['vitorias'] / df_bruto['partidas']) * 1000)
             + ((df_bruto['revives'] / df_bruto['partidas']) * 50)
             + ((df_bruto['assists'] / df_bruto['partidas']) * 35)
         )
@@ -200,4 +177,4 @@ if not df_bruto.empty:
     )
 
 else:
-    st.info("Banco conectado. Aguardando inserção de dados na tabela 'ranking_squad'.")
+    st.info("Banco conectado. Aguardando novos dados na tabela 'ranking_squad'.")
